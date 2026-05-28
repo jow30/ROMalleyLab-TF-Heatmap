@@ -62,49 +62,6 @@ Example inputs can be quickly loaded by clicking `Load all example files` at the
 
 Maximum upload size per file: **50 MB**.
 
-## Run without Docker (local R)
-
-Requires R ≥ 4.4 with packages: `shiny`, `ComplexHeatmap`, `circlize`, `dplyr`, `tibble`, `tidyr` (see `install.R`).
-
-```bash
-cd TFHeatmap
-Rscript install.R   # once
-R -e "shiny::runApp('.')"
-```
-
-Open the URL shown in the terminal (usually http://127.0.0.1:3838).
-
-## macOS app (optional)
-
-If you use Docker Desktop, you can build a double-clickable launcher:
-
-```bash
-docker build -t tf-heatmap-shiny .
-./macos/build_app.sh
-```
-
-Open **`TFHeatmap.app`** in the project folder. It starts the container and opens the app in your browser.
-
-## Project layout
-
-```
-app.R                 # Shiny UI and server
-R/heatmap_core.R      # Heatmap analysis logic
-R/ui_helpers.R        # Example file paths and UI helpers
-test/                 # Example input files (start here)
-Dockerfile            # Container build
-GSAD_DAPseq_TFs.R     # Original batch script (reference)
-```
-
-## Troubleshooting
-
-| Issue | Suggestion |
-|-------|------------|
-| Upload fails / file too large | Per-file limit is 100 MB; compress or subset very large tables |
-| Gene sets not in database | Check TF IDs in `geneset` file match the `tf` column in the database |
-| Empty score / split tabs | Select a score column, or provide TF annotation for split-by-family views |
-| Docker build network error | Run `docker pull rocker/r-ver:4.4.1` then `docker build --pull=false -t tf-heatmap-shiny .` |
-
 ## Citation / reference
 
 Developed for visualizing TF target and DAP-seq–related analyses. Adjust inputs for your organism and experiment; the `test/` files use *Arabidopsis* TF naming from the bundled example database.
