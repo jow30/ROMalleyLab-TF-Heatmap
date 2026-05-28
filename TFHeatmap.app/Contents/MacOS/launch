@@ -1,0 +1,48 @@
+#!/bin/bash
+set -euo pipefail
+
+APP_NAME="TFHeatmap"
+IMAGE="${TFHEATMAP_IMAGE:-tf-heatmap-shiny}"
+CONTAINER="${TFHEATMAP_CONTAINER:-tf-heatmap-shiny}"
+PORT="${TFHEATMAP_PORT:-3838}"
+URL="http://127.0.0.1:${PORT}/"
+
+alert() {
+  osascript -e "display alert \"${APP_NAME}\" message \"${1}\" as critical"
+}
+
+if ! command -v docker >/dev/null 2>&1; then
+  alert "Docker Desktop is required. Install it from https://www.docker.com/products/docker-desktop/"
+  exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  alert "Docker is installed but not running. Open Docker Desktop, wait until it is ready, then launch ${APP_NAME} again."
+  exit 1
+fi
+
+if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+  alert "Docker image \"${IMAGE}\" was not found. Build it first from the project folder:\n\ndocker build -t ${IMAGE} ."
+  exit 1
+fi
+
+if docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER}"; then
+  if docker ps --format '{{.Names}}' | grep -qx "${CONTAINER}"; then
+    :
+  else
+    docker start "${CONTAINER}" >/dev/null
+  fi
+else
+  docker run -d --name "${CONTAINER}" -p "${PORT}:${PORT}" -e "PORT=${PORT}" "${IMAGE}" >/dev/null
+fi
+
+for _ in $(seq 1 30); do
+  if curl -fsS -o /dev/null "${URL}" 2>/dev/null; then
+    open "${URL}"
+    exit 0
+  fi
+  sleep 1
+done
+
+alert "The app container started but did not respond on ${URL}. Check Docker logs:\n\ndocker logs ${CONTAINER}"
+exit 1
