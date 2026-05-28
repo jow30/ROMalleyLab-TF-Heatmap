@@ -53,6 +53,13 @@ Example inputs can be quickly loaded by clicking `Load all example files` at the
 - **Diet mode** — Randomly subsample to 100 genes when the heatmap is very large.
 - **Conservation score column** — Column from the database for the score to plot. 
 
+### Optional annotation files
+
+- **TF annotation** — Tab-separated file with at least `tf`, `display_label`, and `family` columns.
+- **Gene annotation** — Tab-separated file with at least `gene`, `display_label`, and `group` columns.
+- **TF profiles** — Tab-separated file with at least `tf`, and `logFC`/`expression` columns.
+- **Gene profiles** — Tab-separated file with at least `gene`, and `logFC`/`expression` columns.
+
 ## Input file formats (summary)
 
 - **Lists** (`geneset`, `goi`): one ID per line, no header required.
