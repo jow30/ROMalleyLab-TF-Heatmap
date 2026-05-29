@@ -1,9 +1,9 @@
 library(clusterProfiler)
-library(xlsx)
 library(AnnotationHub)
 library(ggplot2)
 library(dplyr)
 library(readxl)
+library(writexl)
 
 working_dir <- "/Volumes/project/gzy8899/qiaoshan/bulkRNAseq/experiments/Hannah/"
 setwd(working_dir)
@@ -20,8 +20,8 @@ out_prefix  <- "~/Documents/Projects/Ronan/GO_enrichment" # user input output fi
 gsmap <- "~/Documents/Projects/Ronan/RNAseq/Ara_ALL_t2g.txt" # user input gene set mapping file (GeneSetID, GeneID); an optional third column with GeneSet category can be provided for gsoi-specific enrichment analysis (e.g., only analyze TF targets in the "BP" category). If null, enrichment analysis will be performed based on the species database (OrgDb) and the specified gene set (ontology).
 gsoi <- "CRG" # user input ontology/geneset for enrichment analysis, e.g., "BP" for Biological Process, "MF" for Molecular Function, "CC" for Cellular Component, "ALL" for all three ontologies, or a specific gene set category in the gsmap file (e.g., "BP" for only analyze gene sets in the "BP" category in the gsmap file), cannot be null if gsmap is null
 bg <- "protein" # user input background genes, e.g., "protein" for all protein-coding genes in the species database, "all" for all genes in the species database, or a custom background gene list (a text file with one gene ID per line, with the same key type as the query genes)
-pvalue_cutoff = 0.05
-fdr_cutoff = 0.1
+pvalue_cutoff = 0.05 # adjusted p-value (FDR) cutoff for significant enrichment, default is 0.05
+qvalue_cutoff = 0.1
 min_gs_size = 5
 max_gs_size = 5000
 ### end of user input
@@ -29,7 +29,7 @@ max_gs_size = 5000
 # load species database from AnnotationHub
 qry <- query(hub, species)
 qry_mat <- mcols(qry)[, c("title", "rdataclass", "description")] %>% as.matrix()
-hub_id <- rownames(qry_mat)[qry_mat[,2]=="OrgDb"]
+hub_id <- tail(rownames(qry_mat)[qry_mat[,2]=="OrgDb"], 1)
 sp_db <- hub[[hub_id]]
 
 # determine key type for the species database
@@ -61,30 +61,44 @@ if (top_key_type == 0 & is.null(gsmap) & file.exists(bg) == FALSE) {
 }
 
 # select background genes (all genes in the species database with the same key type as the query genes)
-if (bg == "protein") {
+if (bg == "protein" & !is.null(key_type)) {
   if ("REFSEQ" %in% columns(sp_db)) {
     bg_genes <- grep("[N|X]P_", keys(sp_db, keytype = "REFSEQ"), value = T) # assuming protein-coding genes have REFSEQ IDs starting with "NP_" or "XP_")
-    bg_genes <- AnnotationDbi::select(sp_db, keys = bg_genes, columns = c("REFSEQ", key_type), keytype = "REFSEQ") %>% as.data.frame() %>% dplyr::select(all_of(key_type)) %>% unlist() %>% unique() %>% na.omit
-    message("Using ", length(bg_genes), " protein-coding genes with a REFSEQ prefix of NP_/XP_ as background.")
+    bg_genes <- AnnotationDbi::select(sp_db, keys = bg_genes, columns = c("REFSEQ", key_type), keytype = "REFSEQ") %>% as.data.frame() %>% dplyr::select(all_of(key_type)) %>% unlist() %>% unique() %>% na.omit()
+    warning("Using ", length(bg_genes), " protein-coding genes with a REFSEQ prefix of NP_/XP_ as background.")
   } else {
     bg_genes <- keys(sp_db, keytype = key_type)
     message("REFSEQ key type not found in the species database. Protein-coding genes cannot be extracted. Using all ", length(bg_genes), " genes with key type ", key_type, " as background instead.")
   }
-} else if (bg == "all") {
+} else if (bg == "all" & !is.null(key_type)) {
   bg_genes <- keys(sp_db, keytype = key_type)
   message("Using all ", length(bg_genes), " genes with key type ", key_type, " as background.")
 } else if (file.exists(bg)) {
   bg_genes <- unique(trimws(readLines(bg)))
   bg_genes_raw_count <- length(bg_genes)
-  if (!is.null(key_type)) bg_genes <- bg_genes[bg_genes %in% keys(sp_db, keytype = key_type)]
-  message("Using ", length(bg_genes), " out of ", bg_genes_raw_count, " custom background genes that matches ", key_type, " IDs.")
+  if (!is.null(key_type)) {
+    bg_genes <- bg_genes[bg_genes %in% keys(sp_db, keytype = key_type)]
+    message("Using ", length(bg_genes), " out of ", bg_genes_raw_count, " custom background genes that matches ", key_type, " IDs.")
+  } else {
+    message("Using ", length(bg_genes), " custom background genes from the provided background gene list. ")
+  }
 } else {
   stop("Invalid background gene option. Please choose either 'protein' for all protein-coding genes,  or 'all' for all genes in the species database, or provide a custom background gene list (a text file with one gene ID per line, with the same key type as the query genes).")
 }
 
-goi <- goi[goi %in% bg_genes] # make sure genes of interest are in the background gene set
+# make sure genes of interest are in the background gene set
+if (sum(goi %in% bg_genes) == 0) {
+  stop("None of the query genes match the background gene set. Please check your query gene list or background gene set.")
+} else {
+  if (sum(goi %in% bg_genes)/length(goi) < 0.5) {
+    warning("Less than 50% of the query genes are in the background gene set. This may lead to unreliable enrichment results. Please check your query gene list and background gene set to make sure they are compatible for enrichment analysis.")
+  } else {
+    message(sum(goi %in% bg_genes), " out of ", length(goi), " query genes are in the background gene set and will be included in the enrichment analysis.")
+  }
+  goi <- goi[goi %in% bg_genes] 
+}
 
-enrich <- function(query_genes, species_db = NULL, gsmap = NULL, key_type = NULL, background_genes = NULL, gene_set = NULL, pvalue_cutoff = 0.05, fdr_cutoff = 0.1, minGSSize = 5, maxGSSize = 5000, out_file = NULL) {
+enrich <- function(query_genes, species_db = NULL, gsmap = NULL, key_type = NULL, background_genes = NULL, gene_set = NULL, pvalue_cutoff = 0.05, qvalue_cutoff = 0.1, minGSSize = 5, maxGSSize = 5000, out_file = NULL) {
   if (!is.null(gsmap)) {
     if (!is.null(gene_set)) {
       gsmap <- gsmap[gsmap[[3]] == gene_set, ]
@@ -93,7 +107,7 @@ enrich <- function(query_genes, species_db = NULL, gsmap = NULL, key_type = NULL
                     TERM2GENE = gsmap, 
                     pAdjustMethod = "BH",
                     pvalueCutoff = pvalue_cutoff,
-                    qvalueCutoff = fdr_cutoff,
+                    qvalueCutoff = qvalue_cutoff,
                     minGSSize = minGSSize,
                     maxGSSize = maxGSSize,
                     universe = background_genes)
@@ -104,7 +118,7 @@ enrich <- function(query_genes, species_db = NULL, gsmap = NULL, key_type = NULL
                     ont = gene_set,
                     pAdjustMethod = "BH",
                     pvalueCutoff = pvalue_cutoff,
-                    qvalueCutoff = fdr_cutoff,
+                    qvalueCutoff = qvalue_cutoff,
                     minGSSize = minGSSize,
                     maxGSSize = maxGSSize,
                     universe = background_genes,
@@ -116,7 +130,7 @@ enrich <- function(query_genes, species_db = NULL, gsmap = NULL, key_type = NULL
   # Save results to Excel
   if (!is.null(ego) && nrow(ego) > 0) {
     if (!is.null(out_file)) {
-      write.xlsx(as.data.frame(ego), file = out_file, row.names = FALSE)
+      writexl::write_xlsx(as.data.frame(ego), path = out_file)
       message("Enrichment results saved to ", out_file)
     } else {
       message(nrow(ego), " significant enrichments found.")
@@ -139,11 +153,11 @@ if (!is.null(gsmap)) {
   }
   
   ora_res <- enrich(goi, gsmap = gsmap, background_genes = bg_genes, gene_set = gsoi, 
-                    pvalue_cutoff = pvalue_cutoff, fdr_cutoff = fdr_cutoff, minGSSize = min_gs_size, maxGSSize = max_gs_size, 
+                    pvalue_cutoff = pvalue_cutoff, qvalue_cutoff = qvalue_cutoff, minGSSize = min_gs_size, maxGSSize = max_gs_size, 
                     out_file = paste0(paste0(c(out_prefix, gsoi), collapse = "_"), ".xlsx"))
 } else {
   ora_res <- enrich(goi, species_db = sp_db, key_type = key_type, background_genes = bg_genes, gene_set = gsoi, 
-                    pvalue_cutoff = pvalue_cutoff, fdr_cutoff = fdr_cutoff, minGSSize = min_gs_size, maxGSSize = max_gs_size,
+                    pvalue_cutoff = pvalue_cutoff, qvalue_cutoff = qvalue_cutoff, minGSSize = min_gs_size, maxGSSize = max_gs_size,
                     out_file = paste0(paste0(c(out_prefix, gsoi), collapse = "_"), ".xlsx"))
 }
 
